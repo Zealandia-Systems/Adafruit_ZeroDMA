@@ -69,14 +69,14 @@ static void cpu_irq_enter_critical(void) {
     }
   }
 
-  cpu_irq_critical_section_counter++;
+  cpu_irq_critical_section_counter = cpu_irq_critical_section_counter + 1;
 }
 
 static void cpu_irq_leave_critical(void) {
   // Check if the user is trying to leave a critical section
   // when not in a critical section
   if (cpu_irq_critical_section_counter > 0) {
-    cpu_irq_critical_section_counter--;
+    cpu_irq_critical_section_counter = cpu_irq_critical_section_counter - 1;
 
     // Only enable global interrupts when the counter
     // reaches 0 and the state of the global interrupt flag
@@ -235,8 +235,8 @@ ZeroDMAstatus Adafruit_ZeroDMA::allocate(void) {
     // Initialize descriptor list addresses
     DMAC->BASEADDR.bit.BASEADDR = (uint32_t)_descriptor;
     DMAC->WRBADDR.bit.WRBADDR = (uint32_t)_writeback;
-    memset(_descriptor, 0, sizeof(_descriptor));
-    memset(_writeback, 0, sizeof(_writeback));
+    memset((void*)_descriptor, 0, sizeof(_descriptor));
+    memset((void*)_writeback, 0, sizeof(_writeback));
 
     // Re-enable DMA controller with all priority levels
     DMAC->CTRL.reg = DMAC_CTRL_DMAENABLE | DMAC_CTRL_LVLEN(0xF);
@@ -256,7 +256,7 @@ ZeroDMAstatus Adafruit_ZeroDMA::allocate(void) {
 #endif
   }
 
-  _channelMask |= 1 << channel; // Mark channel as allocated
+  _channelMask = _channelMask | 1 << channel; // Mark channel as allocated
   _dmaPtr[channel] = this;      // Channel-index-to-object pointer
 
   // Reset the allocated channel
@@ -270,7 +270,7 @@ ZeroDMAstatus Adafruit_ZeroDMA::allocate(void) {
 #endif
 
   // Clear software trigger
-  DMAC->SWTRIGCTRL.reg &= ~(1 << channel);
+  DMAC->SWTRIGCTRL.reg = DMAC->SWTRIGCTRL.reg & ~(1 << channel);
 
   // Configure default behaviors
 #ifdef __SAMD51__
@@ -310,7 +310,7 @@ ZeroDMAstatus Adafruit_ZeroDMA::free(void) {
     status = DMA_STATUS_BUSY; // Can't leave when busy
   } else if ((channel < DMAC_CH_NUM) && (_channelMask & (1 << channel))) {
     // Valid in-use channel; release it
-    _channelMask &= ~(1 << channel); // Clear bit
+    _channelMask = _channelMask & ~(1 << channel); // Clear bit
     if (!_channelMask) {             // No more channels in use?
 #ifdef __SAMD51__
       NVIC_DisableIRQ(DMAC_0_IRQn); // Disable DMA interrupt
@@ -384,7 +384,7 @@ void Adafruit_ZeroDMA::setCallback(void (*cb)(Adafruit_ZeroDMA *),
 void Adafruit_ZeroDMA::suspend(void) {
   cpu_irq_enter_critical();
 #ifdef __SAMD51__
-  DMAC->Channel[channel].CHCTRLB.reg |= DMAC_CHCTRLB_CMD_SUSPEND;
+  DMAC->Channel[channel].CHCTRLB.reg = DMAC->Channel[channel].CHCTRLB.reg | DMAC_CHCTRLB_CMD_SUSPEND;
 #else
   DMAC->CHID.bit.ID = channel;
   DMAC->CHCTRLB.reg |= DMAC_CHCTRLB_CMD_SUSPEND;
@@ -399,7 +399,7 @@ void Adafruit_ZeroDMA::resume(void) {
     int count;
     uint32_t bitMask = 1 << channel;
 #ifdef __SAMD51__
-    DMAC->Channel[channel].CHCTRLB.reg |= DMAC_CHCTRLB_CMD_RESUME;
+    DMAC->Channel[channel].CHCTRLB.reg = DMAC->Channel[channel].CHCTRLB.reg | DMAC_CHCTRLB_CMD_RESUME;
 #else
     DMAC->CHID.bit.ID = channel;
     DMAC->CHCTRLB.reg |= DMAC_CHCTRLB_CMD_RESUME;
@@ -472,7 +472,7 @@ void Adafruit_ZeroDMA::setAction(dma_transfer_trigger_action action) {
 // Issue software trigger. Channel must be allocated & descriptors added!
 void Adafruit_ZeroDMA::trigger(void) {
   if ((channel <= DMAC_CH_NUM) & hasDescriptors)
-    DMAC->SWTRIGCTRL.reg |= (1 << channel);
+    DMAC->SWTRIGCTRL.reg = DMAC->SWTRIGCTRL.reg | (1 << channel);
 }
 
 uint8_t Adafruit_ZeroDMA::getChannel(void) { return channel; }
@@ -552,9 +552,9 @@ DmacDescriptor *Adafruit_ZeroDMA::addDescriptor(void *src, void *dst,
 
   if (srcInc) {
     if (stepSel) {
-      desc->SRCADDR.reg += bytesPerBeat * count * (1 << stepSize);
+      desc->SRCADDR.reg = desc->SRCADDR.reg + bytesPerBeat * count * (1 << stepSize);
     } else {
-      desc->SRCADDR.reg += bytesPerBeat * count;
+      desc->SRCADDR.reg = desc->SRCADDR.reg + bytesPerBeat * count;
     }
   }
 
@@ -562,9 +562,9 @@ DmacDescriptor *Adafruit_ZeroDMA::addDescriptor(void *src, void *dst,
 
   if (dstInc) {
     if (!stepSel) {
-      desc->DSTADDR.reg += bytesPerBeat * count * (1 << stepSize);
+      desc->DSTADDR.reg = desc->DSTADDR.reg + bytesPerBeat * count * (1 << stepSize);
     } else {
-      desc->DSTADDR.reg += bytesPerBeat * count;
+      desc->DSTADDR.reg = desc->DSTADDR.reg + bytesPerBeat * count;
     }
   }
 
@@ -600,10 +600,9 @@ void Adafruit_ZeroDMA::changeDescriptor(DmacDescriptor *desc, void *src,
     desc->SRCADDR.reg = (uint32_t)src;
     if (desc->BTCTRL.bit.SRCINC) {
       if (desc->BTCTRL.bit.STEPSEL) {
-        desc->SRCADDR.reg +=
-            desc->BTCNT.reg * bytesPerBeat * (1 << desc->BTCTRL.bit.STEPSIZE);
+        desc->SRCADDR.reg = desc->SRCADDR.reg + desc->BTCNT.reg * bytesPerBeat * (1 << desc->BTCTRL.bit.STEPSIZE);
       } else {
-        desc->SRCADDR.reg += desc->BTCNT.reg * bytesPerBeat;
+        desc->SRCADDR.reg = desc->SRCADDR.reg + desc->BTCNT.reg * bytesPerBeat;
       }
     }
   }
@@ -612,10 +611,9 @@ void Adafruit_ZeroDMA::changeDescriptor(DmacDescriptor *desc, void *src,
     desc->DSTADDR.reg = (uint32_t)dst;
     if (desc->BTCTRL.bit.DSTINC) {
       if (!desc->BTCTRL.bit.STEPSEL) {
-        desc->DSTADDR.reg +=
-            desc->BTCNT.reg * bytesPerBeat * (1 << desc->BTCTRL.bit.STEPSIZE);
+        desc->DSTADDR.reg = desc->DSTADDR.reg + desc->BTCNT.reg * bytesPerBeat * (1 << desc->BTCTRL.bit.STEPSIZE);
       } else {
-        desc->DSTADDR.reg += desc->BTCNT.reg * bytesPerBeat;
+        desc->DSTADDR.reg = desc->DSTADDR.reg + desc->BTCNT.reg * bytesPerBeat;
       }
     }
   }
